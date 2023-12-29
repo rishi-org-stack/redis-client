@@ -2,6 +2,16 @@ pub mod types;
 
 fn main() {
     println!("Hello, world!");
+    let mut v = vec![0; 3];
+    v[0] = 1;
+    v[1] = 2;
+    v[2] = 3;
+    let x = v.iter().next().unwrap();
+    println!("x: {}", x);
+    let y = v.iter().next().unwrap();
+    println!("y: {}", y);
+    let z = v.iter().next().unwrap();
+    println!("z: {}", z)
 }
 // string
 // +OK\r\n
@@ -51,7 +61,6 @@ fn main() {
 //     -World\r\n
 // ex-3 null array
 //     *-1\r\n
-
 //     array With null
 //         *-1\r\n
 
