@@ -149,7 +149,7 @@ impl RBool {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum INFINITY {
     Pos,
     Neg,
@@ -204,10 +204,6 @@ impl RDouble {
     }
 }
 
-trait My {
-    fn ok(&self);
-}
-
 struct RArray {
     data: Vec<Types>,
     size: usize,
@@ -215,21 +211,53 @@ struct RArray {
 
 impl RArray {
     pub fn from_str(command: &str) -> Result<RArray, ErrType> {
-        let size_elements_str = command.split_once("\r\n").unwrap();
+        let size_elements_str = match command.split_once("\r\n") {
+            Some(v) => v,
+            None => return Err(ErrType::InvalidEncodeStr(Err::new("can not split"))),
+        };
 
-        let size = match size_elements_str.0.parse::<usize>() {
+        let size_i = match size_elements_str.0.parse::<i32>() {
             Ok(s) => s,
             Err(e) => return Err(ErrType::InvalidEncodeStr(Err::new("size is not parseable"))),
         };
 
-        let mut types_str: Vec<&str> = size_elements_str.1.split_inclusive("\r\n").collect();
+        if size_i.is_negative() {
+            return Ok(RArray {
+                data: Vec::with_capacity(0),
+                size: 0,
+            });
+        }
 
-        let data: Vec<Types> = types_str
-            .iter_mut()
-            .map(|v| Types::from_str(v).unwrap())
-            .collect();
+        let size: usize = size_i as usize;
 
-        Ok(RArray { data: data, size })
+        let types_str: Vec<&str> = size_elements_str.1.split_inclusive("\r\n").collect();
+
+        let mut data: Vec<Types> = Vec::new();
+
+        let mut i: usize = 0;
+
+        loop {
+            if i >= types_str.len() {
+                break;
+            }
+            match types_str[i].as_bytes()[0] {
+                b'$' => {
+                    let mut sub_command: String = types_str[i].to_owned();
+                    if types_str[i] != "$-1\r\n" {
+                        sub_command.push_str(types_str[i + 1]);
+                        i += 1
+                    }
+                    let sub_data = Types::from_str(&sub_command).unwrap();
+                    data.push(sub_data);
+                }
+                _ => {
+                    let sub_data = Types::from_str(types_str[i]).unwrap();
+                    data.push(sub_data);
+                }
+            }
+            i += 1;
+        }
+        Ok(RArray { data, size })
     }
 }
 
@@ -251,6 +279,7 @@ impl Types {
         let type_identifier: u8 = command.as_bytes()[0];
         let parsed_type = match type_identifier {
             b'+' => Types::String(RString::from_str(parseable, false).unwrap()),
+            b'$' => Types::String(RString::from_str(parseable, true).unwrap()),
             b':' => Types::Integer(RInteger::from_str(parseable).unwrap()),
             b'*' => Types::Array(RArray::from_str(parseable).unwrap()),
             b'_' => Types::Null(RNull::from_str().unwrap()),
@@ -266,11 +295,10 @@ impl Types {
         Ok(parsed_type)
     }
 }
+
 #[cfg(test)]
 mod tests {
-    use crate::types::data_types::{
-        Err, ErrType, RArray, RBool, RDouble, RInteger, RString, INFINITY,
-    };
+    use crate::types::data_types::{RArray, RBool, RDouble, RInteger, RString, INFINITY};
 
     use super::Types;
 
@@ -554,6 +582,90 @@ mod tests {
                 assert_eq!(is_double.0, true);
                 assert_eq!(is_double.1, expected[i].data);
                 assert_eq!(is_double.2, expected[i].exponent);
+                assert_eq!(is_double.3, expected[i].inf);
+            }
+        }
+    }
+
+    #[test]
+    fn valid_null_array() {
+        let command = "-1\r\n";
+        let r_array: RArray = RArray::from_str(command).unwrap();
+
+        let is_same_size: bool = match r_array.size {
+            0 => true,
+            _ => false,
+        };
+        assert_eq!(is_same_size, true);
+    }
+
+    #[test]
+    fn valid_array_bulk_string_with_null() {
+        let command = "2\r\n$2\r\nok\r\n$-1\r\n";
+        let r_array: RArray = RArray::from_str(command).unwrap();
+
+        let is_same_size: bool = match r_array.size {
+            2 => true,
+            _ => false,
+        };
+        assert_eq!(is_same_size, true);
+
+        if is_same_size {
+            let expected = vec![
+                RString {
+                    data: Some("ok".to_string()),
+                    size: 2,
+                },
+                RString {
+                    data: None,
+                    size: 0,
+                },
+            ];
+            for i in 0..r_array.size {
+                let is_double: (bool, Option<String>, usize) = match &r_array.data[i] {
+                    Types::String(s) => (true, s.data.clone(), s.size),
+                    _ => (false, None, 0),
+                };
+
+                assert_eq!(is_double.0, true);
+                assert_eq!(is_double.1, expected[i].data);
+                assert_eq!(is_double.2, expected[i].size);
+                // assert_eq!(is_double.3, expected[i].inf);
+            }
+        }
+    }
+
+    #[test]
+    fn valid_array_bulk_string() {
+        let command = "2\r\n$2\r\nok\r\n$2\r\nnk\r\n";
+        let r_array: RArray = RArray::from_str(command).unwrap();
+
+        let is_same_size: bool = match r_array.size {
+            2 => true,
+            _ => false,
+        };
+        assert_eq!(is_same_size, true);
+
+        if is_same_size {
+            let expected = vec![
+                RString {
+                    data: Some("ok".to_string()),
+                    size: 2,
+                },
+                RString {
+                    data: Some("nk".to_string()),
+                    size: 2,
+                },
+            ];
+            for i in 0..r_array.size {
+                let is_double: (bool, Option<String>, usize) = match &r_array.data[i] {
+                    Types::String(s) => (true, s.data.clone(), s.size),
+                    _ => (false, None, 0),
+                };
+
+                assert_eq!(is_double.0, true);
+                assert_eq!(is_double.1, expected[i].data);
+                assert_eq!(is_double.2, expected[i].size);
                 // assert_eq!(is_double.3, expected[i].inf);
             }
         }
